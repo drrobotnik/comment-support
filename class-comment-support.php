@@ -68,6 +68,10 @@ class Comment_Support {
 		// Load plugin text domain
 		add_action( 'init', array( $this, 'load_plugin_textdomain' ) );
 		add_action( 'init', array( $this, 'support_post_type' ) );
+		add_action( 'save_post', array( $this, 'save_support_meta' ),100 );
+		add_action( 'pre_get_posts', array( $this, 'my_slice_orderby' ) );
+
+		add_action( 'add_meta_boxes_support',  array( $this, 'add_meta_boxes' ) );
 
 		// Add the options page and menu item.
 		// add_action( 'admin_menu', array( $this, 'add_plugin_admin_menu' ) );
@@ -77,7 +81,7 @@ class Comment_Support {
 		#add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_scripts' ) );
 
 		// Load public-facing style sheet and JavaScript.
-		#add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_styles' ) );
+		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_styles' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
 
 		add_action( 'wp_head', array( $this, 'admin_ajax_url' ) );
@@ -88,10 +92,10 @@ class Comment_Support {
 		//add_action( 'comment_form_defaults', array( $this, 'form_defaults' ) );
 
 		// Define custom functionality. Read more about actions and filters: http://codex.wordpress.org/Plugin_API#Hooks.2C_Actions_and_Filters
-		add_action( 'comment_form_top', array( $this, 'attachment_form_fields' ) );
+		//add_action( 'comment_form_top', array( $this, 'attachment_form_fields' ) );
 		add_action( 'comment_form_before', array( $this, 'must_log_in_to_comment' ) );
 		add_filter('comment_text', array( $this, 'add_attachments_to_comment' ) );
-		add_filter('wp_insert_post_data', array( $this, 'force_type_private' ) );
+		add_filter('save_post', array( $this, 'force_type_private' ) );
 
 	}
 
@@ -120,6 +124,7 @@ class Comment_Support {
 	 */
 	public function activate( $network_wide ) {
 		self::create_role();
+		self::remove_default_roles();
 	}
 
 	/**
@@ -162,6 +167,7 @@ class Comment_Support {
 	
 
 	public function support_post_type(){
+		$post_type = 'support';
 		$labels = array(
 			'name' => 'Support',
 			'singular_name' => 'Support',
@@ -190,20 +196,33 @@ class Comment_Support {
 			'has_archive' => true, 
 			'hierarchical' => false,
 			'menu_position' => null,
-			'supports' => array( 'title', 'comments', 'author' )
-		); 
+			'supports' => array( 'title', 'comments' )
+		);
 
 		register_post_type( 'support', $args );
+
+		add_action( "manage_{$post_type}_posts_custom_column", array( $this, 'add_role_column_filter' ), 10, 2 );
+		
+		add_action( "manage_{$post_type}_posts_columns", array( $this, "add_client_column" ) );
+		add_action( "manage_{$post_type}_posts_columns", array( $this, "add_consultant_column" ) );
+
 	}
 
 	public function create_role(){
-		// Complete list of contributors capabilities
+		// Grab default roles.
 		$contributor_roles = get_role('contributor');
+		$administrator_roles = get_role('administrator');
+
+		// Add new roles.
 		add_role('client', 'Client', $contributor_roles->capabilities);
+		add_role('consultant', 'Consultant', $administrator_roles->capabilities);
+		
 		$support_client = get_role( 'client' );
+		$support_consultant = get_role( 'consultant' );
 		$cpt = apply_filters('clients_post_type', 'support');
-		if ( empty($output) )
+		if ( empty($cpt) )
 			return false;
+		
 		$caps_to_add =  array(
 			"edit_others_{$cpt}",
 			"edit_published_{$cpt}",
@@ -212,8 +231,134 @@ class Comment_Support {
 
 		foreach( $caps_to_add as $cap ) {
 			$support_client->add_cap( $cap );
+			$support_consultant->add_cap( $cap );
 		}
 	}
+
+	public function remove_default_roles() {
+		// Remove default roles.
+		remove_role( 'editor' );
+		remove_role( 'contributor' );
+		remove_role( 'subscriber' );
+	}
+
+	public function add_meta_boxes() {
+		remove_meta_box( 'authordiv', 'support', 'core' );
+		add_meta_box( 'clientdiv', 'Client', array( $this, 'user_role_meta_box' ), 'support', 'side', 'high', array('client') );
+		add_meta_box( 'consultantdiv', 'Consultant', array( $this, 'user_role_meta_box' ), 'support', 'side', 'high', array('consultant') );
+	}
+
+		/**
+	 * Display form field with list of consultants.
+	 *
+	 * @since 2.6.0
+	 *
+	 * @param object $post
+	 */
+	public function user_role_meta_box($post, $callback_args) {
+		global $user_ID,$post;
+
+		$role = $callback_args['args'][0];
+		$nonce = wp_create_nonce( plugin_basename( __FILE__ ) );
+		echo "<input type='hidden' name='support_nonce' value='$nonce' />";
+	?>
+	<label class="screen-reader-text" for="post_<?php echo $role; ?>">Role</label>
+	<?php
+		$users = array();
+		$user_query = new WP_User_Query( array( 'role' => ucfirst( $role ), 'fields' => 'ID' ) );
+
+		if ( ! empty( $user_query->results ) ) {
+			foreach ( $user_query->results as $user ) {
+				$users[] = $user;
+			}
+
+			$selected = get_post_meta( $post->ID, 'post_'.$role, true );
+
+			wp_dropdown_users( array(
+				'include' => implode(',', $users),
+				'name' => 'post_'.$role,
+				'selected' => empty($selected) ? $users[0] : $selected,
+				'include_selected' => true
+			) );	
+		}else{
+			?>
+			<p>There aren't any <?php echo ucfirst($role) ?>. <a href="<?php echo site_url( '/wp-admin/user-new.php' ); ?>">Add one.</a></p>
+			<?php
+		}
+		
+	}
+
+	public function save_support_meta(){
+		global $post_id;
+		/* in production code, $slug should be set only once in the plugin,
+		   preferably as a class property, rather than in each function that needs it.
+		 */
+		$slug = 'support';
+		$roles = array('client','consultant');
+
+		/* check whether anything should be done */
+		$_POST += array("{$slug}_nonce" => '');
+		if ( $slug != $_POST['post_type'] ) {
+			return;
+		}
+
+		if ( !current_user_can( 'edit_post', $post_id ) ) {
+			return;
+		}
+
+		if ( !wp_verify_nonce( $_POST["{$slug}_nonce"], plugin_basename( __FILE__ ) ) )
+		{
+			return;
+		}
+
+		foreach($roles as $role){
+			/* Request passes all checks; update the post's metadata */
+			if (isset($_REQUEST['post_'.$role])) {
+				update_post_meta($post_id, 'post_'.$role, $_REQUEST['post_'.$role]);
+			}
+		}
+	}
+
+	/* Display custom column */
+	function add_role_column_filter( $column, $post_id ) {
+		$user_id = get_post_meta( $post_id, 'post_'.$column, 1 );
+		$user = get_userdata( $user_id );
+		echo '<a href="edit.php?post_type=support&'.$column.'='.$user_id.'">'.$user->user_login.'</a>';
+	}
+
+	/* Add custom column to post list */
+	function add_client_column( $columns ) {
+		return array_merge( $columns, array( 'client' => 'Client' ) );
+	}
+
+	/* Add custom column to post list */
+	function add_consultant_column( $columns ) {
+		return array_merge( $columns, array( 'consultant' => 'Consultant' ) );
+	}
+
+	
+	public function my_slice_orderby( $query ) {
+		if( ! is_admin() )
+			return;
+
+
+		$client = $_GET['client'];
+		$consultant = $_GET['consultant'];
+
+
+		if( !empty($client) ) {
+			$query->set('meta_key','post_client');
+			$query->set('meta_value',$client);
+		}
+
+		if( !empty($consultant) ) {
+			$query->set('meta_key','post_consultant');
+			$query->set('meta_value',$consultant);
+		}
+	}
+
+
+
 
 	/**
 	 * Register and enqueue admin-specific style sheet.
@@ -307,12 +452,21 @@ class Comment_Support {
 		if( ( !is_user_logged_in() || !current_user_can( 'upload_files' ) ) && is_singular( $cpt ))
 			return false;
 	}
-	public function force_type_private($post) {
+	public function force_type_private() {
+
+		// avoid infinite loop.
+		remove_action('save_post', array( $this, 'force_type_private' ));
+
+		$post = $_POST;
+		$post_status = $post['post_status'];
+		//var_dump($post);die;
+
 		$cpt = apply_filters('clients_post_type', 'support');
-		if ($post['post_type'] == $cpt)
-			$post['post_status'] = 'private';
+		$ignore_statuses = array('auto-draft','draft','inherit','trash');
 		
-		return $post;
+		if ( ( $post['post_type'] == $cpt ) && ( !in_array( $post_status, $ignore_statuses ) ) ){ 
+			wp_update_post( array( 'ID'=> $post['post_ID'], 'post_status' => 'private', 'comment_status' => 'open' ) );
+		}
 	}
 
 	public function add_attachments_to_comment($comment_text){
@@ -337,7 +491,7 @@ class Comment_Support {
 	
 	public function add_meta_settings($comment_id) {
 		if( isset( $_POST['attachments'] ) ){
-			foreach($_POST['attachments'] as $attachment){
+			foreach( $_POST['attachments'] as $attachment ){
 				add_comment_meta($comment_id, 'attachment_id', (int) $attachment['id'], false);
 			}
 		}
@@ -350,16 +504,26 @@ class Comment_Support {
 		if( $pagenow == 'async-upload.php' || $pagenow == 'admin-ajax.php' ){
 			# allow users to upload files
 			return true;
-		} else if( is_user_logged_in() && !current_user_can( "delete_plugins" ) ){
+		} else if( is_user_logged_in() && !current_user_can( "create_users" ) ){
 
-			$cpt_query = new WP_Query( array( 'author'=> ( int ) $current_user->data->ID, 'post_type'=> $cpt, 'posts_per_page'=>1 ) );
-			if($cpt_query->have_posts()){
-				while($cpt_query->have_posts()){ $cpt_query->the_post();
+			$cpt_query = new WP_Query( array( 
+				'meta_query' => array(
+					array(
+						'key' => 'post_client',
+						'value' => $current_user->data->ID,
+						'compare' => '=',
+					)
+				),
+				'post_type'=> $cpt, 
+				'posts_per_page'=>1 
+				) );
+			if( $cpt_query->have_posts() ){
+				while( $cpt_query->have_posts() ){ $cpt_query->the_post();
 					wp_safe_redirect( post_permalink( ) );
 					exit;
 				}
 			}else{
-				wp_safe_redirect(home_url());
+				wp_safe_redirect( home_url() );
 				exit;
 			}
 		}
@@ -376,8 +540,8 @@ class Comment_Support {
 		if( 'admin-ajax.php' != $pagenow || $_REQUEST['action'] != 'query-attachments' )
 			return;
 		
-		if( !current_user_can('delete_plugins') )
-			$wp_query_obj->set('author', $current_user->ID );
+		if( !current_user_can( 'delete_plugins' ) )
+			$wp_query_obj->set( 'author', $current_user->ID );
 		
 		return;
 	}

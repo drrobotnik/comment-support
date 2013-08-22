@@ -7,7 +7,7 @@
 		var file_frame;
 		var wp_media_post_id = wp.media.model.settings.post.id; // Store the old id
 	 
-		jQuery('.uploader .button').live('click', function( event ){
+		jQuery('.form-submit .button').live('click', function( event ){
 	 
 			event.preventDefault();
 
@@ -22,10 +22,11 @@
 			} else {
 				// Set the wp.media post id so the uploader grabs the ID we want when initialised
 				wp.media.model.settings.post.id = set_to_post_id;
-				var this_uploader = $(this).closest('.uploader');
+				var this_uploader = $(this).parent().parent().find('.uploader');
+				console.log(this_uploader);
 
 				wp.media.model.settings.form_elem = this_uploader;
-				wp.media.model.settings.thumb_elem = this_uploader.find('.thumbnails');
+				wp.media.model.settings.thumb_elem = this_uploader.find('.cs_thumbnails');
 				wp.media.model.settings.title_elem = this_uploader.find('.image_title');
 				wp.media.model.settings.url_elem = this_uploader.find('.image_url');
 			}
@@ -47,11 +48,22 @@
 				// Do something with attachment.id and/or attachment.url here
 				var fields = '';
 				var thumbnails = '';
+				var image_mime = Array('image/gif','image/png','image/jpeg');
+
 				for (var x=0; x < attachments.length; x++) {
 					var attachment = attachments[x];
+					console.log(attachment.mime);
+					console.log(attachment.icon);
 					fields += '<input type="hidden" name="attachments['+x+'][id]" value="'+attachment.id+'">';
 					fields += '<input type="hidden" name="attachments['+x+'][url]" value="'+attachment.url+'">';
-					thumbnails += '<a href="'+attachment.url+'"><img src="'+attachment.url+'" width="50" height="50" /></a>';
+
+					
+					var url = ( jQuery.inArray(attachment.mime, image_mime) != -1 ) ? attachment.url : attachment.icon;
+					
+					var sizes = ( typeof attachment.sizes != 'undefined' && typeof attachment.sizes.thumbnail != 'undefined' ) ? 'width="'+attachment.sizes.thumbnail.width+'" height="'+attachment.sizes.thumbnail.height+'"' : '';
+					
+					thumbnails += '<a href="'+attachment.url+'"><img src="'+url+'" '+sizes+' /></a>';
+
 				}
 				$( wp.media.model.settings.form_elem ).append( fields );
 				$( wp.media.model.settings.thumb_elem ).append( thumbnails );

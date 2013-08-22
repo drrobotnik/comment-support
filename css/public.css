@@ -1,1 +1,14 @@
-/* This stylesheet is used to style the public view of the plugin. */
+.cs_thumbnails a,
+.attachment-thumbnails a{
+	display:inline-block;
+	margin-left:12px;
+}
+
+.cs_thumbnails a:first-child,
+.attachment-thumbnails a:first-child{ margin-left:0; }
+
+.cs_thumbnails img,
+.attachment-thumbnails img{
+	max-width:60px;
+	height:auto;
+}
